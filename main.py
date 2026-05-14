@@ -281,7 +281,6 @@ async def on_voice_state_update(member, before, after):
 class LeaderboardView(View):
 
     def __init__(self, ctx, ranking, title, mode="messages"):
-
         super().__init__(timeout=180)
 
         self.ctx = ctx
@@ -291,49 +290,22 @@ class LeaderboardView(View):
 
         self.page = 0
         self.per_page = 5
-
-        self.max_pages = max(
-            1,
-            (len(ranking) - 1) // self.per_page + 1
-        )
+        self.max_pages = max(1, (len(ranking) - 1) // self.per_page + 1)
 
         self.update_buttons()
 
-    # ─────────────────────────────────
-
     def update_buttons(self):
-
         self.clear_items()
 
-        first_btn = Button(
-            emoji="⏪",
-            style=discord.ButtonStyle.secondary
-        )
-
-        prev_btn = Button(
-            emoji="◀",
-            style=discord.ButtonStyle.secondary
-        )
-
-        next_btn = Button(
-            emoji="▶",
-            style=discord.ButtonStyle.secondary
-        )
-
-        last_btn = Button(
-            emoji="⏩",
-            style=discord.ButtonStyle.secondary
-        )
-
-        close_btn = Button(
-            emoji="❌",
-            style=discord.ButtonStyle.danger
-        )
-
-        # ─────────────────────────────
+        buttons = [
+            Button(emoji="⏪", style=discord.ButtonStyle.secondary),
+            Button(emoji="◀", style=discord.ButtonStyle.secondary),
+            Button(emoji="▶", style=discord.ButtonStyle.secondary),
+            Button(emoji="⏩", style=discord.ButtonStyle.secondary),
+            Button(emoji="❌", style=discord.ButtonStyle.danger)
+        ]
 
         async def first_callback(interaction):
-
             if interaction.user != self.ctx.author:
                 return await interaction.response.send_message(
                     "Это меню не твое",
@@ -341,14 +313,12 @@ class LeaderboardView(View):
                 )
 
             self.page = 0
-
             await interaction.response.edit_message(
-                embed=self.make_embed(),
+                embed=await self.make_embed(),
                 view=self
             )
 
         async def prev_callback(interaction):
-
             if interaction.user != self.ctx.author:
                 return await interaction.response.send_message(
                     "Это меню не твое",
@@ -359,12 +329,11 @@ class LeaderboardView(View):
                 self.page -= 1
 
             await interaction.response.edit_message(
-                embed=self.make_embed(),
+                embed=await self.make_embed(),
                 view=self
             )
 
         async def next_callback(interaction):
-
             if interaction.user != self.ctx.author:
                 return await interaction.response.send_message(
                     "Это меню не твое",
@@ -375,12 +344,11 @@ class LeaderboardView(View):
                 self.page += 1
 
             await interaction.response.edit_message(
-                embed=self.make_embed(),
+                embed=await self.make_embed(),
                 view=self
             )
 
         async def last_callback(interaction):
-
             if interaction.user != self.ctx.author:
                 return await interaction.response.send_message(
                     "Это меню не твое",
@@ -390,36 +358,83 @@ class LeaderboardView(View):
             self.page = self.max_pages - 1
 
             await interaction.response.edit_message(
-                embed=self.make_embed(),
+                embed=await self.make_embed(),
                 view=self
             )
 
         async def close_callback(interaction):
-
-            if interaction.user != self.ctx.author:
-                return await interaction.response.send_message(
-                    "Это меню не твое",
-                    ephemeral=True
-                )
-
-            await interaction.response.defer()
-
             await interaction.message.delete()
 
-        # ─────────────────────────────
+        callbacks = [
+            first_callback,
+            prev_callback,
+            next_callback,
+            last_callback,
+            close_callback
+        ]
 
-        first_btn.callback = first_callback
-        prev_btn.callback = prev_callback
-        next_btn.callback = next_callback
-        last_btn.callback = last_callback
-        close_btn.callback = close_callback
+        for btn, cb in zip(buttons, callbacks):
+            btn.callback = cb
+            self.add_item(btn)
 
-        self.add_item(first_btn)
-        self.add_item(prev_btn)
-        self.add_item(next_btn)
-        self.add_item(last_btn)
-        self.add_item(close_btn)
+    async def make_embed(self):
+        embed = discord.Embed(
+            title=f"🏆 {self.title}",
+            color=ACCENT_COLOR
+        )
 
+        start = self.page * self.per_page
+        end = start + self.per_page
+        sliced = self.ranking[start:end]
+
+        medals = {
+            0: "🥇",
+            1: "🥈",
+            2: "🥉"
+        }
+
+        # АВАТАР ТОП-1 ЧЕРЕЗ API
+        if self.ranking:
+            top_uid = int(self.ranking[0][0])
+
+            try:
+                user = await self.ctx.bot.fetch_user(top_uid)
+
+                embed.set_thumbnail(
+                    url=user.display_avatar.url
+                )
+            except:
+                pass
+
+        separator = "────────────────────────────"
+
+        for i, (uid, value) in enumerate(sliced, start=start):
+
+            medal = medals.get(i, f"`#{i+1}`")
+
+            stat = (
+                format_voice(value)
+                if self.mode == "voice"
+                else str(value)
+            )
+
+            label = (
+                "Время в войсе"
+                if self.mode == "voice"
+                else "Сообщений"
+            )
+
+            embed.add_field(
+                name=f"{medal} {get_name(uid)}",
+                value=f"{label}: **{stat}**\n{separator}",
+                inline=False
+            )
+
+        embed.set_footer(
+            text=f"Страница {self.page+1}/{self.max_pages}"
+        )
+
+        return embed
     # ─────────────────────────────────
 
    def make_embed(self):
