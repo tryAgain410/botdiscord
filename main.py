@@ -1,18 +1,18 @@
 """
-Discord Bot — voice time + message tracking
-Prefix: "."
+Discord Bot — Stats + Voice Tracker
 Commands:
-.топ дня
+.топдня
 .топвся
 .топвойс
+.стата
 
-Visual styled like JuniperBot
-Keep-alive: Flask
+Styled like JuniperBot
 """
 
 import os
 import json
 import threading
+
 from datetime import datetime, timezone, timedelta
 
 import discord
@@ -20,20 +20,20 @@ from discord.ext import commands, tasks
 from discord.ui import View, Button
 from flask import Flask
 
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
 # CONFIG
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
 
 PREFIX = "."
 DATA_FILE = "data.json"
+
 MOSCOW_TZ = timezone(timedelta(hours=3))
 
-EMBED_COLOR = 0x111214
 ACCENT_COLOR = 0x8B5CF6
 
-# ─────────────────────────────────────────────────────────────
-# FLASK KEEP ALIVE
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
+# FLASK
+# ─────────────────────────────────────────────
 
 app_flask = Flask(__name__)
 
@@ -49,77 +49,117 @@ def run_flask():
 
 
 def keep_alive():
-    threading.Thread(target=run_flask, daemon=True).start()
+    threading.Thread(
+        target=run_flask,
+        daemon=True
+    ).start()
 
 
-# ─────────────────────────────────────────────────────────────
-# DATA
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
+# TIME
+# ─────────────────────────────────────────────
 
-def _moscow_now():
+def moscow_now():
     return datetime.now(MOSCOW_TZ)
 
 
-def _today():
-    return _moscow_now().strftime("%Y-%m-%d")
+def today_date():
+    return moscow_now().strftime("%Y-%m-%d")
 
 
-def _empty_data():
+# ─────────────────────────────────────────────
+# DATA
+# ─────────────────────────────────────────────
+
+def empty_data():
     return {
         "messages": {
-            "all_time": {},
-            "daily": {}
+            "daily": {},
+            "all_time": {}
         },
+
         "voice": {
             "all_time": {}
         },
+
         "usernames": {},
-        "last_reset": _today(),
+
+        "last_reset": today_date()
     }
 
 
 def load_data():
+
     if os.path.exists(DATA_FILE):
+
         try:
+
             with open(DATA_FILE, "r", encoding="utf-8") as f:
-                d = json.load(f)
-                d.setdefault("usernames", {})
-                return d
+                data = json.load(f)
+
+            data.setdefault("messages", {})
+            data["messages"].setdefault("daily", {})
+            data["messages"].setdefault("all_time", {})
+
+            data.setdefault("voice", {})
+            data["voice"].setdefault("all_time", {})
+
+            data.setdefault("usernames", {})
+
+            return data
+
         except Exception:
             pass
 
-    return _empty_data()
+    return empty_data()
 
 
-def save_data(d):
+def save_data(data):
+
     with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(d, f, ensure_ascii=False, indent=2)
+        json.dump(
+            data,
+            f,
+            ensure_ascii=False,
+            indent=2
+        )
 
 
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
 # HELPERS
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
 
-def _format_voice(seconds):
-    minutes = seconds / 60
+def format_voice(seconds):
 
-    if minutes >= 60:
-        return f"{minutes / 60:.1f} ч."
+    seconds = int(seconds)
 
-    return f"{int(minutes)} мин."
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+
+    if hours > 0:
+        return f"{hours} ч. {minutes} мин."
+
+    return f"{minutes} мин."
 
 
-def _name(uid_str):
-    return data["usernames"].get(uid_str, f"User#{uid_str[-4:]}")
+def get_name(uid):
+
+    uid = str(uid)
+
+    return data["usernames"].get(
+        uid,
+        f"User#{uid[-4:]}"
+    )
 
 
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
 # BOT
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
 
 intents = discord.Intents.default()
-intents.voice_states = True
+
 intents.message_content = True
+intents.voice_states = True
 
 bot = commands.Bot(
     command_prefix=PREFIX,
@@ -127,54 +167,55 @@ bot = commands.Bot(
     help_command=None
 )
 
-voice_join_times = {}
 data = {}
 
+voice_join_times = {}
 
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
 # DAILY RESET
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
 
 @tasks.loop(minutes=1)
-async def daily_reset_task():
-    today = _today()
+async def daily_reset():
 
-    if data.get("last_reset") != today:
+    now = moscow_now()
+
+    current_date = today_date()
+
+    if (
+        data.get("last_reset") != current_date
+        and now.hour == 0
+    ):
+
         data["messages"]["daily"] = {}
-        data["last_reset"] = today
+
+        data["last_reset"] = current_date
 
         save_data(data)
 
-        print(f"[{today}] Daily stats reset.")
+        print(f"[{current_date}] Daily reset complete")
 
 
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
 # EVENTS
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
 
 @bot.event
 async def on_ready():
+
     global data
 
     data = load_data()
 
-    today = _today()
+    if not daily_reset.is_running():
+        daily_reset.start()
 
-    if data.get("last_reset") != today:
-        data["messages"]["daily"] = {}
-        data["last_reset"] = today
-        save_data(data)
-
-    daily_reset_task.start()
-
-    print(
-        f"✅ Logged in as {bot.user} — "
-        f"Moscow: {_moscow_now().strftime('%Y-%m-%d %H:%M')}"
-    )
+    print(f"✅ Logged in as {bot.user}")
 
 
 @bot.event
 async def on_message(message):
+
     if message.author.bot:
         return
 
@@ -182,12 +223,14 @@ async def on_message(message):
 
     data["usernames"][uid] = message.author.display_name
 
-    data["messages"]["all_time"][uid] = (
-        data["messages"]["all_time"].get(uid, 0) + 1
-    )
-
+    # daily
     data["messages"]["daily"][uid] = (
         data["messages"]["daily"].get(uid, 0) + 1
+    )
+
+    # all time
+    data["messages"]["all_time"][uid] = (
+        data["messages"]["all_time"].get(uid, 0) + 1
     )
 
     save_data(data)
@@ -197,6 +240,7 @@ async def on_message(message):
 
 @bot.event
 async def on_voice_state_update(member, before, after):
+
     uid = member.id
     uid_str = str(uid)
 
@@ -204,12 +248,14 @@ async def on_voice_state_update(member, before, after):
 
     # JOIN
     if before.channel is None and after.channel is not None:
+
         voice_join_times[uid] = datetime.now(timezone.utc)
 
     # LEAVE / SWITCH
     elif before.channel is not None:
 
         if uid in voice_join_times:
+
             elapsed = (
                 datetime.now(timezone.utc)
                 - voice_join_times.pop(uid)
@@ -224,16 +270,18 @@ async def on_voice_state_update(member, before, after):
 
         # SWITCH CHANNEL
         if after.channel is not None:
+
             voice_join_times[uid] = datetime.now(timezone.utc)
 
 
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
 # LEADERBOARD VIEW
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
 
 class LeaderboardView(View):
 
     def __init__(self, ctx, ranking, title, mode="messages"):
+
         super().__init__(timeout=180)
 
         self.ctx = ctx
@@ -251,7 +299,7 @@ class LeaderboardView(View):
 
         self.update_buttons()
 
-    # ─────────────────────────────────────────
+    # ─────────────────────────────────
 
     def update_buttons(self):
 
@@ -259,41 +307,36 @@ class LeaderboardView(View):
 
         first_btn = Button(
             emoji="⏪",
-            style=discord.ButtonStyle.secondary,
-            row=0
+            style=discord.ButtonStyle.secondary
         )
 
         prev_btn = Button(
             emoji="◀",
-            style=discord.ButtonStyle.secondary,
-            row=0
+            style=discord.ButtonStyle.secondary
         )
 
         next_btn = Button(
             emoji="▶",
-            style=discord.ButtonStyle.secondary,
-            row=0
+            style=discord.ButtonStyle.secondary
         )
 
         last_btn = Button(
             emoji="⏩",
-            style=discord.ButtonStyle.secondary,
-            row=0
+            style=discord.ButtonStyle.secondary
         )
 
         close_btn = Button(
             emoji="❌",
-            style=discord.ButtonStyle.danger,
-            row=0
+            style=discord.ButtonStyle.danger
         )
 
-        # ─────────────────────────────────────
+        # ─────────────────────────────
 
-        async def first_callback(interaction: discord.Interaction):
+        async def first_callback(interaction):
 
             if interaction.user != self.ctx.author:
                 return await interaction.response.send_message(
-                    "Это меню не твое.",
+                    "Это меню не твое",
                     ephemeral=True
                 )
 
@@ -304,11 +347,11 @@ class LeaderboardView(View):
                 view=self
             )
 
-        async def prev_callback(interaction: discord.Interaction):
+        async def prev_callback(interaction):
 
             if interaction.user != self.ctx.author:
                 return await interaction.response.send_message(
-                    "Это меню не твое.",
+                    "Это меню не твое",
                     ephemeral=True
                 )
 
@@ -320,11 +363,11 @@ class LeaderboardView(View):
                 view=self
             )
 
-        async def next_callback(interaction: discord.Interaction):
+        async def next_callback(interaction):
 
             if interaction.user != self.ctx.author:
                 return await interaction.response.send_message(
-                    "Это меню не твое.",
+                    "Это меню не твое",
                     ephemeral=True
                 )
 
@@ -336,11 +379,11 @@ class LeaderboardView(View):
                 view=self
             )
 
-        async def last_callback(interaction: discord.Interaction):
+        async def last_callback(interaction):
 
             if interaction.user != self.ctx.author:
                 return await interaction.response.send_message(
-                    "Это меню не твое.",
+                    "Это меню не твое",
                     ephemeral=True
                 )
 
@@ -351,18 +394,19 @@ class LeaderboardView(View):
                 view=self
             )
 
-        async def close_callback(interaction: discord.Interaction):
+        async def close_callback(interaction):
 
             if interaction.user != self.ctx.author:
                 return await interaction.response.send_message(
-                    "Это меню не твое.",
+                    "Это меню не твое",
                     ephemeral=True
                 )
 
             await interaction.response.defer()
+
             await interaction.message.delete()
 
-        # ─────────────────────────────────────
+        # ─────────────────────────────
 
         first_btn.callback = first_callback
         prev_btn.callback = prev_callback
@@ -376,7 +420,7 @@ class LeaderboardView(View):
         self.add_item(last_btn)
         self.add_item(close_btn)
 
-    # ─────────────────────────────────────────
+    # ─────────────────────────────────
 
     def make_embed(self):
 
@@ -396,40 +440,35 @@ class LeaderboardView(View):
             2: "🥉"
         }
 
-        desc = ""
+        text = ""
 
         for i, (uid, value) in enumerate(sliced, start=start):
 
             medal = medals.get(i, f"`#{i+1}`")
 
-            username = _name(uid)
+            username = get_name(uid)
 
             if self.mode == "voice":
-                value_text = _format_voice(value)
-                stat_label = "В голосовых"
+                stat = format_voice(value)
+                label = "В войсе"
             else:
-                value_text = f"{value}"
-                stat_label = "Сообщений"
+                stat = f"{value}"
+                label = "Сообщений"
 
-            desc += (
-                f"{medal} "
-                f"**{username}**\n"
-                f"> {stat_label}: **{value_text}**\n\n"
+            text += (
+                f"{medal} **{username}**\n"
+                f"> {label}: **{stat}**\n\n"
             )
 
-        embed.description = desc
+        # РАСТЯГИВАЕМ EMBED
+        text += "\n\u200b\n\u200b\n"
 
-        # делаем embed шире визуально
-        embed.add_field(
-            name="",
-            value="⠀",
-            inline=False
-        )
+        embed.description = text
 
         embed.set_footer(
             text=(
-                f"Страница {self.page + 1}/{self.max_pages} "
-                f"• Всего участников: {len(self.ranking)}"
+                f"Страница {self.page + 1}/{self.max_pages}"
+                f" • Всего участников: {len(self.ranking)}"
             )
         )
 
@@ -441,16 +480,12 @@ class LeaderboardView(View):
         return embed
 
 
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
 # COMMANDS
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
 
-@bot.command(name="топ")
-async def top_day(ctx, *, arg=""):
-
-    if arg.strip() != "дня":
-        await ctx.send("Используй: `.топ дня`")
-        return
+@bot.command(name="топдня")
+async def top_day(ctx):
 
     ranking = sorted(
         data["messages"]["daily"].items(),
@@ -459,8 +494,9 @@ async def top_day(ctx, *, arg=""):
     )
 
     if not ranking:
-        await ctx.send("Сегодня ещё никто не писал 😴")
-        return
+        return await ctx.send(
+            "Сегодня никто не писал 😴"
+        )
 
     view = LeaderboardView(
         ctx,
@@ -485,8 +521,9 @@ async def top_all(ctx):
     )
 
     if not ranking:
-        await ctx.send("Данных пока нет.")
-        return
+        return await ctx.send(
+            "Нет данных."
+        )
 
     view = LeaderboardView(
         ctx,
@@ -511,8 +548,9 @@ async def top_voice(ctx):
     )
 
     if not ranking:
-        await ctx.send("Пока никто не был в голосовых каналах.")
-        return
+        return await ctx.send(
+            "Никто не сидел в войсе."
+        )
 
     view = LeaderboardView(
         ctx,
@@ -527,9 +565,56 @@ async def top_voice(ctx):
     )
 
 
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
+# .СТАТА
+# ─────────────────────────────────────────────
+
+@bot.command(name="стата")
+async def stats(ctx):
+
+    uid = str(ctx.author.id)
+
+    daily = data["messages"]["daily"].get(uid, 0)
+
+    all_time = data["messages"]["all_time"].get(uid, 0)
+
+    voice = data["voice"]["all_time"].get(uid, 0)
+
+    embed = discord.Embed(
+        title="📊 Ваша статистика",
+        color=ACCENT_COLOR
+    )
+
+    embed.description = (
+        f"👤 **Пользователь:** {ctx.author.mention}\n\n"
+
+        f"💬 **Сообщений за сутки:** "
+        f"`{daily}`\n\n"
+
+        f"📨 **Сообщений за всё время:** "
+        f"`{all_time}`\n\n"
+
+        f"🎤 **Время в войсе:** "
+        f"`{format_voice(voice)}`\n\n"
+
+        "\u200b\n\u200b"
+    )
+
+    embed.set_footer(
+        text="Личная статистика пользователя"
+    )
+
+    if ctx.author.avatar:
+        embed.set_thumbnail(
+            url=ctx.author.avatar.url
+        )
+
+    await ctx.send(embed=embed)
+
+
+# ─────────────────────────────────────────────
 # RUN
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
 
 if __name__ == "__main__":
 
@@ -537,7 +622,7 @@ if __name__ == "__main__":
 
     if not token:
         raise RuntimeError(
-            "Set DISCORD_TOKEN environment variable."
+            "Set DISCORD_TOKEN environment variable"
         )
 
     keep_alive()
