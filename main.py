@@ -11,6 +11,7 @@ import threading
 from datetime import datetime, timezone, timedelta
 import discord
 from discord.ext import commands, tasks
+from discord.ui import View, Button
 from flask import Flask
 PREFIX = "."
 DATA_FILE = "data.json"
@@ -109,55 +110,230 @@ async def on_voice_state_update(member, before, after):
         if after.channel is not None:
             voice_join_times[uid] = datetime.now(timezone.utc)
 # ── Helpers ───────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────
+
 def _name(uid_str):
     return data["usernames"].get(uid_str, f"User#{uid_str[-4:]}")
-def _box(title, lines):
-    sep = "═" * 32
-    body = "\n".join(lines) if lines else "  Нет данных"
-    return f"```\n╔{sep}╗\n║  {title}\n╠{sep}╣\n{body}\n╚{sep}╝\n```"
+
+
+class LeaderboardView(View):
+    def __init__(self, ctx, ranking, title, mode="messages"):
+        super().__init__(timeout=120)
+
+        self.ctx = ctx
+        self.ranking = ranking
+        self.title = title
+        self.mode = mode
+
+        self.page = 0
+        self.per_page = 5
+
+        self.max_pages = max(1, (len(ranking) - 1) // self.per_page + 1)
+
+        self.update_buttons()
+
+    def update_buttons(self):
+        self.clear_items()
+
+        first_btn = Button(
+            emoji="⏪",
+            style=discord.ButtonStyle.secondary
+        )
+
+        prev_btn = Button(
+            emoji="◀",
+            style=discord.ButtonStyle.secondary
+        )
+
+        next_btn = Button(
+            emoji="▶",
+            style=discord.ButtonStyle.secondary
+        )
+
+        last_btn = Button(
+            emoji="⏩",
+            style=discord.ButtonStyle.secondary
+        )
+
+        close_btn = Button(
+            emoji="❌",
+            style=discord.ButtonStyle.danger
+        )
+
+        async def first_callback(interaction):
+            self.page = 0
+
+            await interaction.response.edit_message(
+                embed=self.make_embed(),
+                view=self
+            )
+
+        async def prev_callback(interaction):
+            if self.page > 0:
+                self.page -= 1
+
+            await interaction.response.edit_message(
+                embed=self.make_embed(),
+                view=self
+            )
+
+        async def next_callback(interaction):
+            if self.page < self.max_pages - 1:
+                self.page += 1
+
+            await interaction.response.edit_message(
+                embed=self.make_embed(),
+                view=self
+            )
+
+        async def last_callback(interaction):
+            self.page = self.max_pages - 1
+
+            await interaction.response.edit_message(
+                embed=self.make_embed(),
+                view=self
+            )
+
+        async def close_callback(interaction):
+            await interaction.message.delete()
+
+        first_btn.callback = first_callback
+        prev_btn.callback = prev_callback
+        next_btn.callback = next_callback
+        last_btn.callback = last_callback
+        close_btn.callback = close_callback
+
+        self.add_item(first_btn)
+        self.add_item(prev_btn)
+        self.add_item(next_btn)
+        self.add_item(last_btn)
+        self.add_item(close_btn)
+
+    def make_embed(self):
+
+        embed = discord.Embed(
+            title=f"🏆 {self.title}",
+            color=0x2B2D31
+        )
+
+        start = self.page * self.per_page
+        end = start + self.per_page
+
+        sliced = self.ranking[start:end]
+
+        text = ""
+
+        medals = {
+            0: "🥇",
+            1: "🥈",
+            2: "🥉"
+        }
+
+        for i, (uid, value) in enumerate(sliced, start=start):
+
+            medal = medals.get(i, f"#{i+1}")
+
+            username = _name(uid)
+
+            if self.mode == "voice":
+                value_text = _format_voice(value)
+            else:
+                value_text = f"{value} сообщ."
+
+            text += (
+                f"{medal} **{username}**\n"
+                f"└ {value_text}\n\n"
+            )
+
+        embed.description = text
+
+        embed.set_footer(
+            text=f"Страница {self.page + 1}/{self.max_pages}"
+        )
+
+        if self.ctx.guild.icon:
+            embed.set_thumbnail(
+                url=self.ctx.guild.icon.url
+            )
+
+        return embed
 # ── Commands ──────────────────────────────────────────────────
-@bot.command(name="стата")
-async def personal_stats(ctx):
-    uid = str(ctx.author.id)
-    data["usernames"][uid] = ctx.author.display_name
-    msg_all   = data["messages"]["all_time"].get(uid, 0)
-    msg_day   = data["messages"]["daily"].get(uid, 0)
-    voice_sec = data["voice"]["all_time"].get(uid, 0)
-    lines = [
-        f"  👤 {ctx.author.display_name}",
-        f"  ✉️  Сообщений сегодня : {msg_day}",
-        f"  📨 Сообщений всего   : {msg_all}",
-        f"  🎙️  Голос (всего)     : {_format_voice(voice_sec) if voice_sec else '0 мин.'}",
-    ]
-    await ctx.send(_box("📊 Твоя статистика", lines))
 @bot.command(name="топ")
 async def top_day(ctx, *, arg=""):
+
     if arg.strip() != "дня":
         await ctx.send("Используй: `.топ дня`")
         return
-    ranking = sorted(data["messages"]["daily"].items(), key=lambda x: x[1], reverse=True)[:10]
+
+    ranking = sorted(
+        data["messages"]["daily"].items(),
+        key=lambda x: x[1],
+        reverse=True
+    )
+
     if not ranking:
         await ctx.send("Сегодня ещё никто не писал 😴")
         return
-    lines = [f"  {i:>2}. {_name(uid):<22} {n} сообщ." for i, (uid, n) in enumerate(ranking, 1)]
-    await ctx.send(_box("🏆 Топ дня — сообщения", lines))
+
+    view = LeaderboardView(
+        ctx,
+        ranking,
+        "Топ дня",
+        mode="messages"
+    )
+
+    await ctx.send(
+        embed=view.make_embed(),
+        view=view
+    )
 @bot.command(name="топвся")
 async def top_all(ctx):
-    ranking = sorted(data["messages"]["all_time"].items(), key=lambda x: x[1], reverse=True)[:10]
+
+    ranking = sorted(
+        data["messages"]["all_time"].items(),
+        key=lambda x: x[1],
+        reverse=True
+    )
+
     if not ranking:
         await ctx.send("Данных пока нет.")
         return
-    lines = [f"  {i:>2}. {_name(uid):<22} {n} сообщ." for i, (uid, n) in enumerate(ranking, 1)]
-    await ctx.send(_box("🏆 Топ всего времени — сообщения", lines))
+
+    view = LeaderboardView(
+        ctx,
+        ranking,
+        "Топ всего времени",
+        mode="messages"
+    )
+
+    await ctx.send(
+        embed=view.make_embed(),
+        view=view
+    )
 @bot.command(name="топвойс")
 async def top_voice(ctx):
-    ranking = sorted(data["voice"]["all_time"].items(), key=lambda x: x[1], reverse=True)[:10]
+
+    ranking = sorted(
+        data["voice"]["all_time"].items(),
+        key=lambda x: x[1],
+        reverse=True
+    )
+
     if not ranking:
         await ctx.send("Пока никто не был в голосовых каналах.")
         return
-    lines = [f"  {i:>2}. {_name(uid):<22} {_format_voice(s)}" for i, (uid, s) in enumerate(ranking, 1)]
-    await ctx.send(_box("🎙️ Топ голоса — всего времени", lines))
-# ── Run ───────────────────────────────────────────────────────
+
+    view = LeaderboardView(
+        ctx,
+        ranking,
+        "Топ голосового",
+        mode="voice"
+    )
+
+    await ctx.send(
+        embed=view.make_embed(),
+        view=view
+    )# ── Run ───────────────────────────────────────────────────────
 if __name__ == "__main__":
     token = os.environ.get("DISCORD_TOKEN")
     if not token:
