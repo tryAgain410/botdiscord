@@ -1,12 +1,3 @@
-"""
-Discord Bot — Stats + Voice Tracker
-Commands:
-.топдня
-.топвся
-.топвойс
-.стата
-"""
-
 import os
 import json
 import threading
@@ -17,14 +8,10 @@ from discord.ext import commands, tasks
 from discord.ui import View, Button
 from flask import Flask
 
-# CONFIG
-
 PREFIX = "."
 DATA_FILE = "data.json"
 MOSCOW_TZ = timezone(timedelta(hours=3))
 ACCENT_COLOR = 0x8B5CF6
-
-# FLASK
 
 app_flask = Flask(__name__)
 
@@ -39,7 +26,6 @@ def run_flask():
 def keep_alive():
     threading.Thread(target=run_flask, daemon=True).start()
 
-# TIME
 
 def moscow_now():
     return datetime.now(MOSCOW_TZ)
@@ -47,7 +33,6 @@ def moscow_now():
 def today_date():
     return moscow_now().strftime("%Y-%m-%d")
 
-# DATA
 
 def empty_data():
     return {
@@ -57,20 +42,21 @@ def empty_data():
         "last_reset": today_date()
     }
 
+
 def load_data():
     if os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except Exception:
+        except:
             pass
     return empty_data()
+
 
 def save_data(data):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-# HELPERS
 
 def format_voice(seconds):
     seconds = int(seconds)
@@ -79,14 +65,13 @@ def format_voice(seconds):
 
     if hours > 0:
         return f"{hours} ч. {minutes} мин."
-
     return f"{minutes} мин."
+
 
 def get_name(uid):
     uid = str(uid)
     return data["usernames"].get(uid, f"User#{uid[-4:]}")
 
-# BOT
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -101,7 +86,6 @@ bot = commands.Bot(
 data = {}
 voice_join_times = {}
 
-# DAILY RESET
 
 @tasks.loop(minutes=1)
 async def daily_reset():
@@ -112,7 +96,6 @@ async def daily_reset():
         data["last_reset"] = current
         save_data(data)
 
-# EVENTS
 
 @bot.event
 async def on_ready():
@@ -123,6 +106,7 @@ async def on_ready():
         daily_reset.start()
 
     print(f"Logged in as {bot.user}")
+
 
 @bot.event
 async def on_message(message):
@@ -136,8 +120,8 @@ async def on_message(message):
     data["messages"]["all_time"][uid] = data["messages"]["all_time"].get(uid, 0) + 1
 
     save_data(data)
-
     await bot.process_commands(message)
+
 
 @bot.event
 async def on_voice_state_update(member, before, after):
@@ -164,7 +148,6 @@ async def on_voice_state_update(member, before, after):
         if after.channel is not None:
             voice_join_times[uid] = datetime.now(timezone.utc)
 
-# LEADERBOARD
 
 class LeaderboardView(View):
     def __init__(self, ctx, ranking, title, mode="messages"):
@@ -174,7 +157,6 @@ class LeaderboardView(View):
         self.ranking = ranking
         self.title = title
         self.mode = mode
-
         self.page = 0
         self.per_page = 5
         self.max_pages = max(1, (len(ranking)-1)//self.per_page+1)
@@ -193,34 +175,24 @@ class LeaderboardView(View):
         ]
 
         async def first(i):
-            if i.user != self.ctx.author:
-                return await i.response.send_message("Это меню не твоё", ephemeral=True)
             self.page = 0
             await i.response.edit_message(embed=self.make_embed(), view=self)
 
         async def prev(i):
-            if i.user != self.ctx.author:
-                return await i.response.send_message("Это меню не твоё", ephemeral=True)
             if self.page > 0:
                 self.page -= 1
             await i.response.edit_message(embed=self.make_embed(), view=self)
 
         async def next_(i):
-            if i.user != self.ctx.author:
-                return await i.response.send_message("Это меню не твоё", ephemeral=True)
             if self.page < self.max_pages - 1:
                 self.page += 1
             await i.response.edit_message(embed=self.make_embed(), view=self)
 
         async def last(i):
-            if i.user != self.ctx.author:
-                return await i.response.send_message("Это меню не твоё", ephemeral=True)
             self.page = self.max_pages - 1
             await i.response.edit_message(embed=self.make_embed(), view=self)
 
         async def close(i):
-            if i.user != self.ctx.author:
-                return await i.response.send_message("Это меню не твоё", ephemeral=True)
             await i.message.delete()
 
         callbacks = [first, prev, next_, last, close]
@@ -245,13 +217,14 @@ class LeaderboardView(View):
             2: "🥉"
         }
 
-        # АВАТАР ТОП-1
         if self.ranking:
             top_uid = int(self.ranking[0][0])
             member = self.ctx.guild.get_member(top_uid)
 
             if member:
-                embed.set_thumbnail(url=member.display_avatar.url)
+                embed.set_thumbnail(
+                    url=member.display_avatar.url
+                )
 
         separator = "────────────────────────────"
 
@@ -261,12 +234,14 @@ class LeaderboardView(View):
             stat = (
                 format_voice(value)
                 if self.mode == "voice"
-                else f"{value} сообщ."
+                else str(value)
             )
+
+            label = "Время в войсе" if self.mode == "voice" else "Сообщений"
 
             embed.add_field(
                 name=f"{medal} {get_name(uid)}",
-                value=f"**{stat}**\n{separator}",
+                value=f"{label}: **{stat}**\n{separator}",
                 inline=False
             )
 
@@ -276,15 +251,10 @@ class LeaderboardView(View):
 
         return embed
 
-# COMMANDS
 
 @bot.command(name="топдня")
 async def top_day(ctx):
-    ranking = sorted(
-        data["messages"]["daily"].items(),
-        key=lambda x: x[1],
-        reverse=True
-    )
+    ranking = sorted(data["messages"]["daily"].items(), key=lambda x: x[1], reverse=True)
 
     if not ranking:
         return await ctx.send("Сегодня никто не писал")
@@ -292,13 +262,10 @@ async def top_day(ctx):
     view = LeaderboardView(ctx, ranking, "Топ дня")
     await ctx.send(embed=view.make_embed(), view=view)
 
+
 @bot.command(name="топвся")
 async def top_all(ctx):
-    ranking = sorted(
-        data["messages"]["all_time"].items(),
-        key=lambda x: x[1],
-        reverse=True
-    )
+    ranking = sorted(data["messages"]["all_time"].items(), key=lambda x: x[1], reverse=True)
 
     if not ranking:
         return await ctx.send("Нет данных")
@@ -306,19 +273,17 @@ async def top_all(ctx):
     view = LeaderboardView(ctx, ranking, "Топ вся")
     await ctx.send(embed=view.make_embed(), view=view)
 
+
 @bot.command(name="топвойс")
 async def top_voice(ctx):
-    ranking = sorted(
-        data["voice"]["all_time"].items(),
-        key=lambda x: x[1],
-        reverse=True
-    )
+    ranking = sorted(data["voice"]["all_time"].items(), key=lambda x: x[1], reverse=True)
 
     if not ranking:
         return await ctx.send("Нет данных")
 
     view = LeaderboardView(ctx, ranking, "Топ войс", mode="voice")
     await ctx.send(embed=view.make_embed(), view=view)
+
 
 @bot.command(name="стата")
 async def stats(ctx):
@@ -351,7 +316,6 @@ async def stats(ctx):
 
     await ctx.send(embed=embed)
 
-# RUN
 
 if __name__ == "__main__":
     token = os.environ.get("DISCORD_TOKEN")
